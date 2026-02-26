@@ -154,6 +154,10 @@ async function connectDB() {
                     await db.execute('ALTER TABLE conversations ADD COLUMN whatsapp VARCHAR(100)');
                     console.log('Migration: Colonne whatsapp ajoutée à conversations');
                 }
+                if (!columnNames.includes('problem')) {
+                    await db.execute('ALTER TABLE conversations ADD COLUMN problem TEXT');
+                    console.log('Migration: Colonne problem ajoutée à conversations');
+                }
             } catch (colErr) {
                 console.error('Erreur vérification colonnes:', colErr.message);
             }
@@ -484,17 +488,17 @@ io.on('connection', (socket) => {
 
         if (convs.length === 0) {
             const [result] = await db.execute(
-                'INSERT INTO conversations (visitor_id, first_name, last_name, whatsapp) VALUES (?, ?, ?, ?)',
-                [data.visitorId, data.firstName || null, data.lastName || null, data.whatsapp || null]
+                'INSERT INTO conversations (visitor_id, first_name, last_name, whatsapp, problem) VALUES (?, ?, ?, ?, ?)',
+                [data.visitorId, data.firstName || null, data.lastName || null, data.whatsapp || null, data.problem || null]
             );
             conversationId = result.insertId;
         } else {
             conversationId = convs[0].id;
             // Optionnel : Mettre à jour les infos si elles ont changé
-            if (data.firstName || data.lastName || data.whatsapp) {
+            if (data.firstName || data.lastName || data.whatsapp || data.problem) {
                 await db.execute(
-                    'UPDATE conversations SET first_name = COALESCE(?, first_name), last_name = COALESCE(?, last_name), whatsapp = COALESCE(?, whatsapp) WHERE id = ?',
-                    [data.firstName || null, data.lastName || null, data.whatsapp || null, conversationId]
+                    'UPDATE conversations SET first_name = COALESCE(?, first_name), last_name = COALESCE(?, last_name), whatsapp = COALESCE(?, whatsapp), problem = COALESCE(?, problem) WHERE id = ?',
+                    [data.firstName || null, data.lastName || null, data.whatsapp || null, data.problem || null, conversationId]
                 );
             }
         }
