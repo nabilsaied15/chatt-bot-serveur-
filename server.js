@@ -304,20 +304,66 @@ app.post('/api/stats', async (req, res) => {
     }
 });
 
-// Endpoint pour tester l'email manuellement avec diagnostics réseau
+// Endpoint pour tester l'email manuellement avec diagnostics
 app.get('/api/stats/test-email', async (req, res) => {
+    const BREVO_API_KEY = process.env.BREVO_API_KEY;
+    const testTarget = req.query.email || process.env.NOTIFICATION_EMAIL || "nabilsaied04@gmail.com";
+
+    // Si Brevo est configuré, on teste l'API
+    if (BREVO_API_KEY) {
+        try {
+            const https = require('https');
+            const data = JSON.stringify({
+                sender: { name: "asad.to Test", email: "test@asad.to" },
+                to: [{ email: testTarget }],
+                subject: "Test Diagnostic Brevo asad.to",
+                htmlContent: `<h2>Succès !</h2><p>L'API Brevo est bien configurée sur votre serveur Render.</p>`
+            });
+
+            const options = {
+                hostname: 'api.brevo.com',
+                path: '/v3/smtp/email',
+                method: 'POST',
+                headers: {
+                    'accept': 'application/json',
+                    'api-key': BREVO_API_KEY,
+                    'content-type': 'application/json',
+                    'content-length': data.length
+                }
+            };
+
+            const brevoReq = https.request(options, (brevoRes) => {
+                let body = '';
+                brevoRes.on('data', d => body += d);
+                brevoRes.on('end', () => {
+                    if (brevoRes.statusCode >= 200 && brevoRes.statusCode < 300) {
+                        res.json({ success: true, message: `Email de test envoyé via Brevo à ${testTarget}` });
+                    } else {
+                        res.status(brevoRes.statusCode).json({ success: false, phase: "Brevo API", error: body });
+                    }
+                });
+            });
+
+            brevoReq.on('error', (e) => res.status(500).json({ success: false, phase: "Réseau", error: e.message }));
+            brevoReq.write(data);
+            brevoReq.end();
+            return;
+        } catch (err) {
+            return res.status(500).json({ success: false, error: err.message });
+        }
+    }
+
+    // Sinon, on teste le SMTP classique (Diagnostic de base)
     const host = process.env.SMTP_HOST || 'smtp.gmail.com';
     const port = parseInt(process.env.SMTP_PORT || "587");
-    const testTarget = req.query.email || process.env.NOTIFICATION_EMAIL || process.env.SMTP_USER;
 
-    // Diagnostic Réseau de base
     const net = require('net');
     const checkConnection = () => {
         return new Promise((resolve) => {
             const socket = net.createConnection(port, host);
             socket.setTimeout(3000);
             socket.on('connect', () => { socket.destroy(); resolve({ ok: true }); });
-            socket.on('timeout', () => { socket.destroy(); resolve({ ok: false, error: "Timeout réseau (3s) - Le port est peut-être bloqué." }); });
+            socket.on('timeout', () => { socket.destroy(); resolve({ ok: false, error: "Timeout réseau (3s) - Le port est bloqué sur Render." }); });
             socket.on('error', (err) => { socket.destroy(); resolve({ ok: false, error: err.message }); });
         });
     };
@@ -326,46 +372,26 @@ app.get('/api/stats/test-email', async (req, res) => {
     if (!netResult.ok) {
         return res.status(500).json({
             success: false,
-            phase: "Réseau (DNS/Port)",
+            phase: "Réseau (SMTP bloqué ?)",
             error: netResult.error,
-            host,
-            port,
-            hint: `Le serveur ne peut pas atteindre ${host}:${port}. Essayez de changer le port (465 vs 587) dans les variables Render.`
+            hint: "Render bloque souvent les ports SMTP. Utilisez BREVO_API_KEY pour contourner cela."
         });
     }
 
     if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
-        return res.status(400).json({
-            success: false,
-            phase: "Configuration",
-            error: "SMTP_USER ou SMTP_PASS manquant."
-        });
+        return res.status(400).json({ success: false, error: "Configuration SMTP incomplète et BREVO_API_KEY manquante." });
     }
 
     try {
         await transporter.sendMail({
             from: `"asad.to Test" <${process.env.SMTP_USER}>`,
             to: testTarget,
-            subject: "Test de configuration Email asad.to",
-            text: "Succès ! Votre configuration SMTP fonctionne. 🚀",
-            html: `
-                <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #00b06b; border-radius: 10px;">
-                    <h2 style="color: #00b06b;">Succès !</h2>
-                    <p>Votre configuration SMTP asad.to fonctionne parfaitement sur <b>${host}:${port}</b>.</p>
-                    <p><strong>Envoyé à:</strong> ${testTarget}</p>
-                </div>
-            `
+            subject: "Test SMTP asad.to",
+            text: "Succès ! Votre configuration SMTP fonctionne."
         });
-        res.json({ success: true, message: `Email envoyé avec succès à ${testTarget}` });
+        res.json({ success: true, message: `Email envoyé via SMTP à ${testTarget}` });
     } catch (err) {
-        console.error("[Test Email] Erreur Auth/SMTP:", err.message);
-        res.status(500).json({
-            success: false,
-            phase: "Authentification/Envoi",
-            error: err.message,
-            code: err.code,
-            hint: "Si vous utilisez Gmail, vérifiez que vous avez bien généré un 'Mot de passe d'application' (16 caractères)."
-        });
+        res.status(500).json({ success: false, phase: "Authentification SMTP", error: err.message });
     }
 });
 
