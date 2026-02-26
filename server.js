@@ -2,8 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
-const mysql = require('mysql2/promise');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 const nodemailer = require('nodemailer');
 require('dotenv').config();
 
@@ -198,7 +197,7 @@ app.get('/api/notifications/unread', async (req, res) => {
 // API: Mark as read
 app.put('/api/conversations/:id/read', async (req, res) => {
     try {
-        await db.execute('UPDATE messages SET is_read = TRUE WHERE conversation_id = ? AND sender_type = "visitor"', [req.params.id]);
+        await db.execute("UPDATE messages SET is_read = TRUE WHERE conversation_id = ? AND sender_type = 'visitor'", [req.params.id]);
         res.json({ message: 'Messages marqués comme lus' });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -450,7 +449,7 @@ io.on('connection', (socket) => {
         };
         socket.join(data.visitorId);
 
-        let [convs] = await db.execute('SELECT id FROM conversations WHERE visitor_id = ? AND status = "open"', [data.visitorId]);
+        let [convs] = await db.execute("SELECT id FROM conversations WHERE visitor_id = ? AND status = 'open'", [data.visitorId]);
         let conversationId;
 
         if (convs.length === 0) {
@@ -480,7 +479,7 @@ io.on('connection', (socket) => {
                 const [convs] = await db.execute('SELECT is_muted FROM conversations WHERE id = ?', [socket.conversationId]);
                 const isMuted = convs.length > 0 ? convs[0].is_muted : false;
 
-                await db.execute('INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, ?, ?)', [socket.conversationId, 'visitor', data.text]);
+                await db.execute("INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'visitor', ?)", [socket.conversationId, data.text]);
 
                 visitor.lastMessage = { text: data.text, sender: 'visitor', timestamp: Date.now() };
                 io.to('agents_room').emit('visitor_list', Object.values(onlineVisitors));
@@ -498,35 +497,34 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('agent_message', async (data) => {
-        let [convs] = await db.execute('SELECT id FROM conversations WHERE visitor_id = ? AND status = "open"', [data.visitorId]);
-        if (convs.length > 0) {
-            await db.execute('INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, ?, ?)', [convs[0].id, 'agent', data.text]);
+    let [convs] = await db.execute("SELECT id FROM conversations WHERE visitor_id = ? AND status = 'open'", [data.visitorId]);
+    if (convs.length > 0) {
+        await db.execute("INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'agent', ?)", [convs[0].id, data.text]);
 
-            const visitorSocket = Object.keys(onlineVisitors).find(key => onlineVisitors[key].visitorId === data.visitorId);
-            if (visitorSocket) {
-                onlineVisitors[visitorSocket].isBotActive = false;
-                onlineVisitors[visitorSocket].lastMessage = { text: data.text, sender: 'agent', timestamp: Date.now() };
-                io.to('agents_room').emit('visitor_list', Object.values(onlineVisitors));
-            }
+        const visitorSocket = Object.keys(onlineVisitors).find(key => onlineVisitors[key].visitorId === data.visitorId);
+        if (visitorSocket) {
+            onlineVisitors[visitorSocket].isBotActive = false;
+            onlineVisitors[visitorSocket].lastMessage = { text: data.text, sender: 'agent', timestamp: Date.now() };
+            io.to('agents_room').emit('visitor_list', Object.values(onlineVisitors));
         }
-        io.to(data.visitorId).emit('agent_message', { text: data.text, timestamp: Date.now() });
-    });
+    }
+    io.to(data.visitorId).emit('agent_message', { text: data.text, timestamp: Date.now() });
+});
 
-    socket.on('typing', (data) => {
-        if (data.isAgent) {
-            io.to(data.visitorId).emit('typing', { isAgent: true });
-        } else {
-            io.to('agents_room').emit('typing', { visitorId: data.visitorId });
-        }
-    });
+socket.on('typing', (data) => {
+    if (data.isAgent) {
+        io.to(data.visitorId).emit('typing', { isAgent: true });
+    } else {
+        io.to('agents_room').emit('typing', { visitorId: data.visitorId });
+    }
+});
 
-    socket.on('disconnect', () => {
-        delete onlineVisitors[socket.id];
-        delete onlineAgents[socket.id];
-        io.to('agents_room').emit('visitor_list', Object.values(onlineVisitors));
-        io.to('agents_room').emit('agent_list', Object.values(onlineAgents));
-    });
+socket.on('disconnect', () => {
+    delete onlineVisitors[socket.id];
+    delete onlineAgents[socket.id];
+    io.to('agents_room').emit('visitor_list', Object.values(onlineVisitors));
+    io.to('agents_room').emit('agent_list', Object.values(onlineAgents));
+});
 });
 
 const PORT = process.env.PORT || 3000;
