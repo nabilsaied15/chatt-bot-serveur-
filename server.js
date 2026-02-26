@@ -404,14 +404,38 @@ app.get('/api/stats/summary', async (req, res) => {
         const [[{ count: agentMessages }]] = await db.execute('SELECT COUNT(*) as count FROM messages WHERE sender_type = "agent"');
         const [[{ count: visitorMessages }]] = await db.execute('SELECT COUNT(*) as count FROM messages WHERE sender_type = "visitor"');
 
-        console.log(`[Stats] Summary requested: ${clicks} clicks, ${onlineCount} online, ${agentMessages} agent, ${visitorMessages} visitor`);
+        // Advanced Stats: Total Conversations
+        const [[{ count: totalConvs }]] = await db.execute('SELECT COUNT(*) as count FROM conversations WHERE status != "deleted"');
+
+        // Advanced Stats: Avg Response Time (Seconds)
+        const [respTimeResult] = await db.execute(`
+            SELECT AVG(TIMESTAMPDIFF(SECOND, first_visitor.created_at, first_agent.created_at)) as avg_seconds
+            FROM (
+                SELECT conversation_id, MIN(created_at) as created_at
+                FROM messages
+                WHERE sender_type = 'visitor'
+                GROUP BY conversation_id
+            ) first_visitor
+            JOIN (
+                SELECT conversation_id, MIN(created_at) as created_at
+                FROM messages
+                WHERE sender_type = 'agent'
+                GROUP BY conversation_id
+            ) first_agent ON first_visitor.conversation_id = first_agent.conversation_id
+            WHERE first_agent.created_at > first_visitor.created_at
+        `);
+        const avgResponseTime = respTimeResult[0].avg_seconds || 0;
+
         res.json({
             totalClicks: clicks,
             onlineVisitors: onlineCount,
             totalAgentMessages: agentMessages,
-            totalVisitorMessages: visitorMessages
+            totalVisitorMessages: visitorMessages,
+            totalConversations: totalConvs,
+            avgResponseTime: Math.round(avgResponseTime)
         });
     } catch (err) {
+        console.error('[Stats] Summary error:', err.message);
         res.status(500).json({ error: err.message });
     }
 });
@@ -462,6 +486,23 @@ app.get('/api/stats/messages-by-day', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+
+app.get('/api/stats/hourly-activity', async (req, res) => {
+    try {
+        const [rows] = await db.execute(`
+            SELECT HOUR(created_at) as hour, COUNT(*) as count
+            FROM messages
+            WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+            GROUP BY hour
+            ORDER BY hour ASC
+        `);
+        res.json(rows);
+    } catch (err) {
+        console.error('[Stats] Hourly error:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 
 app.get('/api/agents', async (req, res) => {
     try {
