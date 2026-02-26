@@ -709,12 +709,11 @@ app.get('/api/settings/:userId', async (req, res) => {
                 whatsapp_notifications: 0,
                 whatsapp_number: ''
             });
-        });
         }
-res.json(rows[0]);
+        res.json(rows[0]);
     } catch (err) {
-    res.status(500).json({ error: err.message });
-}
+        res.status(500).json({ error: err.message });
+    }
 });
 
 app.get('/api/public/settings/:siteKey', async (req, res) => {
