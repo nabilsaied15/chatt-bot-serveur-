@@ -107,23 +107,38 @@ async function connectDB() {
 
         // Robust migration
         try {
-            const [columns] = await db.execute('SHOW COLUMNS FROM messages LIKE "is_read"');
-            if (columns.length === 0) {
-                await db.execute('ALTER TABLE messages ADD COLUMN is_read BOOLEAN DEFAULT FALSE');
-                console.log('Colonne is_read ajoutée à la table messages');
-            }
+            // Création des tables de base si elles n'existent pas
+            await db.execute(`
+                CREATE TABLE IF NOT EXISTS users (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    name VARCHAR(100),
+                    email VARCHAR(100) UNIQUE,
+                    password_hash VARCHAR(255),
+                    role VARCHAR(20) DEFAULT 'user',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            `);
 
-            const [convColumns] = await db.execute('SHOW COLUMNS FROM conversations LIKE "is_muted"');
-            if (convColumns.length === 0) {
-                await db.execute('ALTER TABLE conversations ADD COLUMN is_muted BOOLEAN DEFAULT FALSE');
-                console.log('Colonne is_muted ajoutée à la table conversations');
-            }
+            await db.execute(`
+                CREATE TABLE IF NOT EXISTS conversations (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    visitor_id VARCHAR(100),
+                    status VARCHAR(20) DEFAULT 'open',
+                    is_muted BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            `);
 
-            const [userColumns] = await db.execute('SHOW COLUMNS FROM users LIKE "role"');
-            if (userColumns.length === 0) {
-                await db.execute('ALTER TABLE users ADD COLUMN role VARCHAR(20) DEFAULT "user"');
-                console.log('Colonne role ajoutée à la table users');
-            }
+            await db.execute(`
+                CREATE TABLE IF NOT EXISTS messages (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    conversation_id INT,
+                    sender_type VARCHAR(20),
+                    content TEXT,
+                    is_read BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            `);
 
             const [statsTable] = await db.execute('SHOW TABLES LIKE "stats"');
             if (statsTable.length === 0) {
