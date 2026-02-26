@@ -270,14 +270,16 @@ app.get('/api/stats/summary', async (req, res) => {
         const [[{ count: clicks }]] = await db.execute('SELECT COUNT(*) as count FROM stats WHERE event_type = "site_click"');
         const onlineCount = Object.keys(onlineVisitors).length;
 
-        // Count total agent messages
+        // Count total messages
         const [[{ count: agentMessages }]] = await db.execute('SELECT COUNT(*) as count FROM messages WHERE sender_type = "agent"');
+        const [[{ count: visitorMessages }]] = await db.execute('SELECT COUNT(*) as count FROM messages WHERE sender_type = "visitor"');
 
-        console.log(`[Stats] Summary requested: ${clicks} clicks, ${onlineCount} online, ${agentMessages} agent msgs`);
+        console.log(`[Stats] Summary requested: ${clicks} clicks, ${onlineCount} online, ${agentMessages} agent, ${visitorMessages} visitor`);
         res.json({
             totalClicks: clicks,
             onlineVisitors: onlineCount,
-            totalAgentMessages: agentMessages
+            totalAgentMessages: agentMessages,
+            totalVisitorMessages: visitorMessages
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -293,7 +295,7 @@ app.get('/api/stats/messages-by-day', async (req, res) => {
                 SUM(CASE WHEN sender_type = 'visitor' THEN 1 ELSE 0 END) as visitor_count,
                 SUM(CASE WHEN sender_type = 'agent' THEN 1 ELSE 0 END) as agent_count
             FROM messages 
-            WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+            WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 29 DAY)
             GROUP BY day
             ORDER BY day ASC
         `);
