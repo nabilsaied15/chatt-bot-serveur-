@@ -142,6 +142,18 @@ async function connectDB() {
                     await db.execute('ALTER TABLE conversations ADD COLUMN is_muted BOOLEAN DEFAULT FALSE');
                     console.log('Migration: Colonne is_muted ajoutée à conversations');
                 }
+                if (!columnNames.includes('first_name')) {
+                    await db.execute('ALTER TABLE conversations ADD COLUMN first_name VARCHAR(100)');
+                    console.log('Migration: Colonne first_name ajoutée à conversations');
+                }
+                if (!columnNames.includes('last_name')) {
+                    await db.execute('ALTER TABLE conversations ADD COLUMN last_name VARCHAR(100)');
+                    console.log('Migration: Colonne last_name ajoutée à conversations');
+                }
+                if (!columnNames.includes('whatsapp')) {
+                    await db.execute('ALTER TABLE conversations ADD COLUMN whatsapp VARCHAR(100)');
+                    console.log('Migration: Colonne whatsapp ajoutée à conversations');
+                }
             } catch (colErr) {
                 console.error('Erreur vérification colonnes:', colErr.message);
             }
@@ -471,10 +483,20 @@ io.on('connection', (socket) => {
         let conversationId;
 
         if (convs.length === 0) {
-            const [result] = await db.execute('INSERT INTO conversations (visitor_id) VALUES (?)', [data.visitorId]);
+            const [result] = await db.execute(
+                'INSERT INTO conversations (visitor_id, first_name, last_name, whatsapp) VALUES (?, ?, ?, ?)',
+                [data.visitorId, data.firstName || null, data.lastName || null, data.whatsapp || null]
+            );
             conversationId = result.insertId;
         } else {
             conversationId = convs[0].id;
+            // Optionnel : Mettre à jour les infos si elles ont changé
+            if (data.firstName || data.lastName || data.whatsapp) {
+                await db.execute(
+                    'UPDATE conversations SET first_name = COALESCE(?, first_name), last_name = COALESCE(?, last_name), whatsapp = COALESCE(?, whatsapp) WHERE id = ?',
+                    [data.firstName || null, data.lastName || null, data.whatsapp || null, conversationId]
+                );
+            }
         }
 
         socket.conversationId = conversationId;
