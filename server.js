@@ -395,6 +395,20 @@ app.get('/api/stats/test-email', async (req, res) => {
     }
 });
 
+app.post('/api/stats', async (req, res) => {
+    const { event_type, visitor_id } = req.body;
+    try {
+        await db.execute(
+            'INSERT INTO stats (event_type, visitor_id) VALUES (?, ?)',
+            [event_type, visitor_id]
+        );
+        res.json({ success: true });
+    } catch (err) {
+        console.error('[Stats] Error recording event:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.get('/api/stats/summary', async (req, res) => {
     try {
         const [[{ count: clicks }]] = await db.execute('SELECT COUNT(*) as count FROM stats WHERE event_type = "site_click"');
