@@ -86,15 +86,23 @@ const onlineAgents = {};
 
 async function connectDB() {
     try {
-        db = await mysql.createPool({
+        const dbConfig = {
             host: process.env.DB_HOST,
             user: process.env.DB_USER,
             password: process.env.DB_PASS,
             database: process.env.DB_NAME,
+            port: process.env.DB_PORT || 3306,
             waitForConnections: true,
             connectionLimit: 10,
             queueLimit: 0
-        });
+        };
+
+        // Aiven nécessite SSL
+        if (process.env.DB_SSL === 'true') {
+            dbConfig.ssl = { rejectUnauthorized: false };
+        }
+
+        db = await mysql.createPool(dbConfig);
         console.log('Connecté à la base de données MySQL');
 
         // Robust migration
