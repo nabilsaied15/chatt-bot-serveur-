@@ -15,18 +15,21 @@ const server = http.createServer(app);
 
 // Configuration Nodemailer
 const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: process.env.SMTP_PORT,
-    secure: process.env.SMTP_PORT == 465,
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port: process.env.SMTP_PORT || 465,
+    secure: (process.env.SMTP_PORT || 465) == 465,
     auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS
     }
 });
+console.log(`[Notifications] Nodemailer configuré sur ${process.env.SMTP_HOST || 'smtp.gmail.com'}:${process.env.SMTP_PORT || 465}`);
 
 async function sendNotificationEmail(visitorId, text) {
+    console.log(`[Notifications] Tentative d'envoi pour ${visitorId}. SMTP_USER: ${process.env.SMTP_USER ? 'Défini' : 'NON DÉFINI'}`);
+
     if (!process.env.SMTP_USER || process.env.SMTP_USER.includes('@example.com') || process.env.SMTP_USER.includes('votre-email')) {
-        console.log("[Notifications] SMTP non configuré, email ignoré.");
+        console.log("[Notifications] SMTP non configuré ou valeur par défaut détectée, email ignoré.");
         return;
     }
 
