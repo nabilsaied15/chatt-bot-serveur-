@@ -16,25 +16,25 @@ const server = http.createServer(app);
 // Configuration Nodemailer
 const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT || "465"),
-    secure: parseInt(process.env.SMTP_PORT || "465") === 465,
+    port: parseInt(process.env.SMTP_PORT || "587"),
+    secure: parseInt(process.env.SMTP_PORT || "587") === 465,
     auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS
     },
-    connectionTimeout: 10000, // 10 secondes max pour se connecter
-    greetingTimeout: 10000,
-    socketTimeout: 15000
+    connectionTimeout: 5000, // 5 secondes max
+    greetingTimeout: 5000,
+    socketTimeout: 10000
 });
 
 transporter.verify((error, success) => {
     if (error) {
-        console.error("[Notifications] Erreur de vérification SMTP:", error.message);
+        console.error("[Notifications] SMTP Error:", error.message);
     } else {
-        console.log("[Notifications] Serveur SMTP prêt pour l'envoi.");
+        console.log("[Notifications] SMTP Ready.");
     }
 });
-console.log(`[Notifications] Nodemailer configuré sur ${process.env.SMTP_HOST || 'smtp.gmail.com'}:${process.env.SMTP_PORT || 465}`);
+console.log(`[Notifications] Nodemailer: ${process.env.SMTP_HOST || 'smtp.gmail.com'}:${process.env.SMTP_PORT || 587}`);
 
 async function sendNotificationEmail(visitorId, text) {
     console.log(`[Notifications] Tentative d'envoi pour ${visitorId}. SMTP_USER: ${process.env.SMTP_USER ? 'Défini' : 'NON DÉFINI'}`);
