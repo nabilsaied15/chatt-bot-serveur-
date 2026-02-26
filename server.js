@@ -37,35 +37,60 @@ transporter.verify((error, success) => {
 console.log(`[Notifications] Nodemailer: ${process.env.SMTP_HOST || 'smtp.gmail.com'}:${process.env.SMTP_PORT || 587}`);
 
 async function sendNotificationEmail(visitorId, text) {
-    console.log(`[Notifications] Tentative d'envoi pour ${visitorId}. SMTP_USER: ${process.env.SMTP_USER ? 'Défini' : 'NON DÉFINI'}`);
+    const BREVO_API_KEY = process.env.BREVO_API_KEY;
+    const NOTIF_EMAIL = process.env.NOTIFICATION_EMAIL;
 
-    if (!process.env.SMTP_USER || process.env.SMTP_USER.includes('@example.com') || process.env.SMTP_USER.includes('votre-email')) {
-        console.log("[Notifications] SMTP non configuré ou valeur par défaut détectée, email ignoré.");
+    if (!BREVO_API_KEY) {
+        console.log("[Notifications] BREVO_API_KEY non configurée. Tentative SMTP...");
+        // Fallback SMTP (probablement bloqué sur Render mais utile en local)
+        if (!process.env.SMTP_USER) return;
+        try {
+            await transporter.sendMail({
+                from: `"asad.to" <${process.env.SMTP_USER}>`,
+                to: NOTIF_EMAIL || process.env.SMTP_USER,
+                subject: "Nouveau message sur le site",
+                text: `Message de ${visitorId}: ${text}`
+            });
+        } catch (e) { console.error("[Notifications] Erreur SMTP:", e.message); }
         return;
     }
 
-    const mailOptions = {
-        from: `"asad.to Alerte" <${process.env.SMTP_USER}>`,
-        to: process.env.NOTIFICATION_EMAIL || process.env.SMTP_USER,
-        subject: `Nouveau message de Visitor ${visitorId.substring(0, 5)}`,
-        text: `Vous avez reçu un nouveau message sur asad.to :\n\n"${text}"\n\nRépondez sur votre dashboard: https://asad-chat-bot.vercel.app/inbox`,
-        html: `
-            <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
-                <h2 style="color: #00b06b;">Nouveau message asad.to</h2>
-                <p><strong>Visiteur:</strong> ${visitorId}</p>
+    // Envoi via API Brevo (HTTP) - Passe à travers les blocages Render
+    const https = require('https');
+    const data = JSON.stringify({
+        sender: { name: "asad.to", email: "notif@asad.to" },
+        to: [{ email: NOTIF_EMAIL || "nabilsaied04@gmail.com" }],
+        subject: "Vous avez un nouveau message sur le site",
+        htmlContent: `
+            <div style="font-family:sans-serif; padding:20px;">
+                <h2 style="color:#00b06b;">Nouveau message asad.to</h2>
+                <p><strong>Visiteur:</strong> ${visitorId.substring(0, 8)}</p>
                 <p><strong>Message:</strong> "${text}"</p>
-                <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
-                <a href="https://asad-chat-bot.vercel.app/inbox" style="background: #00b06b; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">Répondre au client</a>
-            </div>
-        `
+                <a href="https://asad-chat-bot.vercel.app/inbox" style="display:inline-block; background:#00b06b; color:white; padding:10px 20px; text-decoration:none; border-radius:5px;">Répondre au client</a>
+            </div>`
+    });
+
+    const options = {
+        hostname: 'api.brevo.com',
+        path: '/v3/smtp/email',
+        method: 'POST',
+        headers: {
+            'accept': 'application/json',
+            'api-key': BREVO_API_KEY,
+            'content-type': 'application/json',
+            'content-length': data.length
+        }
     };
 
-    try {
-        await transporter.sendMail(mailOptions);
-        console.log(`[Notifications] Email envoyé pour ${visitorId}`);
-    } catch (error) {
-        console.error("[Notifications] Erreur lors de l'envoi de l'email:", error.message);
-    }
+    const req = https.request(options, (res) => {
+        let body = '';
+        res.on('data', d => body += d);
+        res.on('end', () => console.log(`[Notifications] Brevo API Response: ${res.statusCode} ${body}`));
+    });
+
+    req.on('error', (e) => console.error(`[Notifications] Brevo API Error: ${e.message}`));
+    req.write(data);
+    req.end();
 }
 
 async function sendWhatsAppNotification(visitorId, text) {
@@ -550,8 +575,9 @@ app.delete('/api/users/:id', async (req, res) => {
 
 // Conversations Endpoints
 app.get('/api/conversations', async (req, res) => {
+    const { status } = req.query;
     try {
-        const [convs] = await db.execute(`
+        let query = `
             SELECT c.*, m.content as last_message, m.created_at as last_message_time,
             (SELECT COUNT(*) FROM messages WHERE conversation_id = c.id AND sender_type = 'visitor' AND is_read = FALSE) as unread_count
             FROM conversations c
@@ -560,9 +586,45 @@ app.get('/api/conversations', async (req, res) => {
                 FROM messages
                 WHERE id IN (SELECT MAX(id) FROM messages GROUP BY conversation_id)
             ) m ON c.id = m.conversation_id
-            ORDER BY m.created_at DESC
-        `);
+        `;
+
+        const params = [];
+        if (status) {
+            query += ' WHERE c.status = ?';
+            params.push(status);
+        } else {
+            query += " WHERE c.status != 'deleted'";
+        }
+
+        query += ' ORDER BY m.created_at DESC';
+
+        const [convs] = await db.execute(query, params);
         res.json(convs);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/conversations/:id/status', async (req, res) => {
+    const { status } = req.body;
+    if (!['open', 'closed', 'deleted'].includes(status)) {
+        return res.status(400).json({ error: 'Status invalide' });
+    }
+    try {
+        await db.execute('UPDATE conversations SET status = ? WHERE id = ?', [status, req.params.id]);
+        res.json({ message: `Status mis à jour vers ${status}` });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/conversations/:id', async (req, res) => {
+    try {
+        // Supprimer d'abord les messages liés
+        await db.execute('DELETE FROM messages WHERE conversation_id = ?', [req.params.id]);
+        // Puis la conversation
+        await db.execute('DELETE FROM conversations WHERE id = ?', [req.params.id]);
+        res.json({ message: 'Conversation supprimée définitivement' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
