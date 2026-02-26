@@ -32,7 +32,7 @@ async function sendNotificationEmail(visitorId, text) {
 
     const mailOptions = {
         from: `"asad.to Alerte" <${process.env.SMTP_USER}>`,
-        to: process.env.NOTIFICATION_EMAIL,
+        to: process.env.NOTIFICATION_EMAIL || process.env.SMTP_USER,
         subject: `Nouveau message de Visitor ${visitorId.substring(0, 5)}`,
         text: `Vous avez reçu un nouveau message sur asad.to :\n\n"${text}"\n\nRépondez sur votre dashboard: https://asad-chat-bot.vercel.app/inbox`,
         html: `
