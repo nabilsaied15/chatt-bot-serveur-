@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const mysql = require('mysql2/promise');
 const bcrypt = require('bcryptjs');
 const nodemailer = require('nodemailer');
 require('dotenv').config();
@@ -127,6 +128,23 @@ async function connectDB() {
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             `);
+
+            // Migration: S'assurer que les colonnes existent pour les anciennes installations
+            try {
+                const [columns] = await db.execute('SHOW COLUMNS FROM conversations');
+                const columnNames = columns.map(c => c.Field);
+
+                if (!columnNames.includes('status')) {
+                    await db.execute("ALTER TABLE conversations ADD COLUMN status VARCHAR(20) DEFAULT 'open'");
+                    console.log('Migration: Colonne status ajoutée à conversations');
+                }
+                if (!columnNames.includes('is_muted')) {
+                    await db.execute('ALTER TABLE conversations ADD COLUMN is_muted BOOLEAN DEFAULT FALSE');
+                    console.log('Migration: Colonne is_muted ajoutée à conversations');
+                }
+            } catch (colErr) {
+                console.error('Erreur vérification colonnes:', colErr.message);
+            }
 
             await db.execute(`
                 CREATE TABLE IF NOT EXISTS messages (
