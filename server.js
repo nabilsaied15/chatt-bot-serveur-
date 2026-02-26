@@ -268,6 +268,42 @@ app.post('/api/stats', async (req, res) => {
     }
 });
 
+// Endpoint pour tester l'email manuellement
+app.get('/api/stats/test-email', async (req, res) => {
+    const testTarget = req.query.email || process.env.NOTIFICATION_EMAIL || process.env.SMTP_USER;
+
+    if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+        return res.status(400).json({
+            success: false,
+            error: "SMTP_USER ou SMTP_PASS non configuré sur le serveur."
+        });
+    }
+
+    try {
+        await transporter.sendMail({
+            from: `"asad.to Test" <${process.env.SMTP_USER}>`,
+            to: testTarget,
+            subject: "Test de configuration Email asad.to",
+            text: "Si vous recevez cet email, votre configuration SMTP est correcte ! 🚀",
+            html: `
+                <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #00b06b; border-radius: 10px;">
+                    <h2 style="color: #00b06b;">Succès !</h2>
+                    <p>Votre configuration SMTP asad.to fonctionne parfaitement.</p>
+                    <p><strong>Envoyé à:</strong> ${testTarget}</p>
+                </div>
+            `
+        });
+        res.json({ success: true, message: `Email de test envoyé à ${testTarget}` });
+    } catch (err) {
+        console.error("[Test Email] Erreur:", err.message);
+        res.status(500).json({
+            success: false,
+            error: err.message,
+            hint: "Vérifiez que vous utilisez un 'Mot de passe d'application' si vous utilisez Gmail."
+        });
+    }
+});
+
 app.get('/api/stats/summary', async (req, res) => {
     try {
         const [[{ count: clicks }]] = await db.execute('SELECT COUNT(*) as count FROM stats WHERE event_type = "site_click"');
