@@ -279,14 +279,41 @@ app.post('/api/stats', async (req, res) => {
     }
 });
 
-// Endpoint pour tester l'email manuellement
+// Endpoint pour tester l'email manuellement avec diagnostics réseau
 app.get('/api/stats/test-email', async (req, res) => {
+    const host = process.env.SMTP_HOST || 'smtp.gmail.com';
+    const port = parseInt(process.env.SMTP_PORT || "587");
     const testTarget = req.query.email || process.env.NOTIFICATION_EMAIL || process.env.SMTP_USER;
+
+    // Diagnostic Réseau de base
+    const net = require('net');
+    const checkConnection = () => {
+        return new Promise((resolve) => {
+            const socket = net.createConnection(port, host);
+            socket.setTimeout(3000);
+            socket.on('connect', () => { socket.destroy(); resolve({ ok: true }); });
+            socket.on('timeout', () => { socket.destroy(); resolve({ ok: false, error: "Timeout réseau (3s) - Le port est peut-être bloqué." }); });
+            socket.on('error', (err) => { socket.destroy(); resolve({ ok: false, error: err.message }); });
+        });
+    };
+
+    const netResult = await checkConnection();
+    if (!netResult.ok) {
+        return res.status(500).json({
+            success: false,
+            phase: "Réseau (DNS/Port)",
+            error: netResult.error,
+            host,
+            port,
+            hint: `Le serveur ne peut pas atteindre ${host}:${port}. Essayez de changer le port (465 vs 587) dans les variables Render.`
+        });
+    }
 
     if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
         return res.status(400).json({
             success: false,
-            error: "SMTP_USER ou SMTP_PASS non configuré sur le serveur."
+            phase: "Configuration",
+            error: "SMTP_USER ou SMTP_PASS manquant."
         });
     }
 
@@ -295,22 +322,24 @@ app.get('/api/stats/test-email', async (req, res) => {
             from: `"asad.to Test" <${process.env.SMTP_USER}>`,
             to: testTarget,
             subject: "Test de configuration Email asad.to",
-            text: "Si vous recevez cet email, votre configuration SMTP est correcte ! 🚀",
+            text: "Succès ! Votre configuration SMTP fonctionne. 🚀",
             html: `
                 <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #00b06b; border-radius: 10px;">
                     <h2 style="color: #00b06b;">Succès !</h2>
-                    <p>Votre configuration SMTP asad.to fonctionne parfaitement.</p>
+                    <p>Votre configuration SMTP asad.to fonctionne parfaitement sur <b>${host}:${port}</b>.</p>
                     <p><strong>Envoyé à:</strong> ${testTarget}</p>
                 </div>
             `
         });
-        res.json({ success: true, message: `Email de test envoyé à ${testTarget}` });
+        res.json({ success: true, message: `Email envoyé avec succès à ${testTarget}` });
     } catch (err) {
-        console.error("[Test Email] Erreur:", err.message);
+        console.error("[Test Email] Erreur Auth/SMTP:", err.message);
         res.status(500).json({
             success: false,
+            phase: "Authentification/Envoi",
             error: err.message,
-            hint: "Vérifiez que vous utilisez un 'Mot de passe d'application' si vous utilisez Gmail."
+            code: err.code,
+            hint: "Si vous utilisez Gmail, vérifiez que vous avez bien généré un 'Mot de passe d'application' (16 caractères)."
         });
     }
 });
