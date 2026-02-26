@@ -34,14 +34,14 @@ async function sendNotificationEmail(visitorId, text) {
         from: `"asad.to Alerte" <${process.env.SMTP_USER}>`,
         to: process.env.NOTIFICATION_EMAIL,
         subject: `Nouveau message de Visitor ${visitorId.substring(0, 5)}`,
-        text: `Vous avez reçu un nouveau message sur asad.to :\n\n"${text}"\n\nRépondez sur votre dashboard: http://localhost:5175/inbox`,
+        text: `Vous avez reçu un nouveau message sur asad.to :\n\n"${text}"\n\nRépondez sur votre dashboard: https://asad-chat-bot.vercel.app/inbox`,
         html: `
             <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
                 <h2 style="color: #00b06b;">Nouveau message asad.to</h2>
                 <p><strong>Visiteur:</strong> ${visitorId}</p>
                 <p><strong>Message:</strong> "${text}"</p>
                 <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
-                <a href="http://localhost:5175/inbox" style="background: #00b06b; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">Répondre au client</a>
+                <a href="https://asad-chat-bot.vercel.app/inbox" style="background: #00b06b; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">Répondre au client</a>
             </div>
         `
     };
