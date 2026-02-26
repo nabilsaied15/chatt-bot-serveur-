@@ -16,11 +16,22 @@ const server = http.createServer(app);
 // Configuration Nodemailer
 const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: process.env.SMTP_PORT || 465,
-    secure: (process.env.SMTP_PORT || 465) == 465,
+    port: parseInt(process.env.SMTP_PORT || "465"),
+    secure: parseInt(process.env.SMTP_PORT || "465") === 465,
     auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS
+    },
+    connectionTimeout: 10000, // 10 secondes max pour se connecter
+    greetingTimeout: 10000,
+    socketTimeout: 15000
+});
+
+transporter.verify((error, success) => {
+    if (error) {
+        console.error("[Notifications] Erreur de vérification SMTP:", error.message);
+    } else {
+        console.log("[Notifications] Serveur SMTP prêt pour l'envoi.");
     }
 });
 console.log(`[Notifications] Nodemailer configuré sur ${process.env.SMTP_HOST || 'smtp.gmail.com'}:${process.env.SMTP_PORT || 465}`);
