@@ -260,6 +260,17 @@ async function connectDB() {
                 console.error('Erreur migration settings columns:', setErr.message);
             }
 
+            // Migration Stats (Ensure it exists for the summary page)
+            await db.execute(`
+                CREATE TABLE IF NOT EXISTS stats (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    event_type VARCHAR(50) NOT NULL,
+                    visitor_id VARCHAR(100),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            `);
+            console.log('Table stats vérifiée/créée');
+
             console.log('Table settings vérifiée/créée');
         } catch (migErr) {
             console.error('Erreur migration:', migErr.message);
@@ -731,6 +742,7 @@ app.get('/api/public/settings/:siteKey', async (req, res) => {
 app.post('/api/settings/:userId', async (req, res) => {
     const { primary_color, welcome_message, email_notifications, whatsapp_notifications, whatsapp_number } = req.body;
     const userId = req.params.userId;
+    console.log(`[Settings] Save request for user ${userId}:`, req.body);
     try {
         await db.execute(`
             INSERT INTO settings (user_id, primary_color, welcome_message, email_notifications, whatsapp_notifications, whatsapp_number)
