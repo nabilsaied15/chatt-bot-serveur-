@@ -287,18 +287,45 @@ app.get('/api/stats/summary', async (req, res) => {
 });
 
 app.get('/api/stats/messages-by-day', async (req, res) => {
+    const { period } = req.query;
+    let days = 29;
+    let format = '%Y-%m-%d';
+    let interval = 'DAY';
+    let groupFormat = '%Y-%m-%d';
+
+    if (period === '7d') days = 6;
+    else if (period === '1y') {
+        days = 11;
+        interval = 'MONTH';
+        groupFormat = '%Y-%m';
+    } else if (period === 'all') {
+        days = 36;
+        interval = 'MONTH';
+        groupFormat = '%Y-%m';
+    }
+
     try {
-        // Obtenir les messages des 7 derniers jours par type d'expéditeur
-        const [rows] = await db.execute(`
+        const query = interval === 'DAY' ? `
             SELECT 
-                DATE_FORMAT(created_at, '%Y-%m-%d') as day,
+                DATE_FORMAT(created_at, '${groupFormat}') as day,
                 SUM(CASE WHEN sender_type = 'visitor' THEN 1 ELSE 0 END) as visitor_count,
                 SUM(CASE WHEN sender_type = 'agent' THEN 1 ELSE 0 END) as agent_count
             FROM messages 
-            WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 29 DAY)
+            WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ${days} DAY)
             GROUP BY day
             ORDER BY day ASC
-        `);
+        ` : `
+            SELECT 
+                DATE_FORMAT(created_at, '${groupFormat}') as day,
+                SUM(CASE WHEN sender_type = 'visitor' THEN 1 ELSE 0 END) as visitor_count,
+                SUM(CASE WHEN sender_type = 'agent' THEN 1 ELSE 0 END) as agent_count
+            FROM messages 
+            WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ${days} MONTH)
+            GROUP BY day
+            ORDER BY day ASC
+        `;
+
+        const [rows] = await db.execute(query);
         res.json(rows);
     } catch (err) {
         console.error('[Stats] Erreur messages-by-day:', err.message);
