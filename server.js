@@ -383,6 +383,17 @@ async function connectDB() {
                 )
             `);
             console.log('Table stats vérifiée/créée');
+
+            // Quick Replies Table
+            await db.execute(`
+                CREATE TABLE IF NOT EXISTS quick_replies (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    shortcut VARCHAR(50) UNIQUE NOT NULL,
+                    text TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            `);
+            console.log('Table quick_replies vérifiée/créée');
         } catch (migErr) {
             console.error('CRITICAL Migration Error:', migErr.message);
         }
@@ -1129,6 +1140,56 @@ io.on('connection', (socket) => {
         io.to('agents_room').emit('visitor_list', Object.values(onlineVisitors));
         io.to('agents_room').emit('agent_list', Object.values(onlineAgents));
     });
+});
+
+// API: Quick Replies
+app.get('/api/quick-replies', async (req, res) => {
+    try {
+        const [rows] = await db.execute('SELECT * FROM quick_replies ORDER BY shortcut ASC');
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/quick-replies', async (req, res) => {
+    try {
+        const { shortcut, text } = req.body;
+        const [result] = await db.execute('INSERT INTO quick_replies (shortcut, text) VALUES (?, ?)', [shortcut, text]);
+        res.json({ id: result.insertId, shortcut, text });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/quick-replies/:id', async (req, res) => {
+    try {
+        const { shortcut, text } = req.body;
+        await db.execute('UPDATE quick_replies SET shortcut = ?, text = ? WHERE id = ?', [shortcut, text, req.params.id]);
+        res.json({ id: req.params.id, shortcut, text });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/quick-replies/:id', async (req, res) => {
+    try {
+        await db.execute('DELETE FROM quick_replies WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// API: Conversation Status
+app.patch('/api/conversations/:id/status', async (req, res) => {
+    try {
+        const { status } = req.body;
+        await db.execute('UPDATE conversations SET status = ? WHERE id = ?', [status, req.params.id]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 const PORT = process.env.PORT || 3000;
