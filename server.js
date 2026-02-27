@@ -36,9 +36,10 @@ transporter.verify((error, success) => {
 });
 console.log(`[Notifications] Nodemailer: ${process.env.SMTP_HOST || 'smtp.gmail.com'}:${process.env.SMTP_PORT || 587}`);
 
-async function sendNotificationEmail(visitorId, text, targetEmail = null) {
-    const BREVO_API_KEY = process.env.BREVO_API_KEY;
+async function sendNotificationEmail(visitorId, text, targetEmail = null, customApiKey = null, senderEmail = null) {
+    const BREVO_API_KEY = customApiKey || process.env.BREVO_API_KEY;
     const NOTIF_EMAIL = targetEmail || process.env.NOTIFICATION_EMAIL;
+    const SENDER_EMAIL = senderEmail || NOTIF_EMAIL || "nabilsaied04@gmail.com";
 
     if (!BREVO_API_KEY) {
         console.log("[Notifications] BREVO_API_KEY non configurée. Tentative SMTP...");
@@ -58,7 +59,7 @@ async function sendNotificationEmail(visitorId, text, targetEmail = null) {
     // Envoi via API Brevo (HTTP) - Passe à travers les blocages Render
     const https = require('https');
     const data = JSON.stringify({
-        sender: { name: "asad.to", email: "notif@asad.to" },
+        sender: { name: "asad.to", email: SENDER_EMAIL },
         to: [{ email: NOTIF_EMAIL || "nabilsaied04@gmail.com" }],
         subject: "Vous avez un nouveau message sur le site",
         htmlContent: `
@@ -93,22 +94,103 @@ async function sendNotificationEmail(visitorId, text, targetEmail = null) {
     req.end();
 }
 
-async function sendWhatsAppNotification(visitorId, text, targetPhone = null) {
-    const number = targetPhone || process.env.WHATSAPP_NUMBER;
-    if (!number || number === '33600000000') {
+async function sendWhatsAppNotification(visitorId, text, targetPhone = null, customApiKey = null) {
+    const number = (targetPhone || process.env.WHATSAPP_NUMBER || "").replace(/\s+/g, "").replace("+", "");
+    const apikey = customApiKey || process.env.WHATSAPP_API_KEY || process.env.CALLMEBOT_API_KEY;
+
+    if (!number || number === '33600000000' || number === "") {
         console.log("[Notifications] WhatsApp non configuré (numéro manquant).");
         return;
     }
 
-    const message = `Nouveau message asad.to de ${visitorId}: ${text}`;
-    const encodedMsg = encodeURIComponent(message);
-    const waLink = `https://wa.me/${number}?text=${encodedMsg}`;
+    if (!apikey) {
+        console.log("[Notifications] WhatsApp API Key manquante (CallMeBot).");
+        const encodedMsg = encodeURIComponent(`Nouveau message de ${visitorId}: ${text}`);
+        console.log(`[Notifications] ALERTE WHATSAPP (Lien :): https://wa.me/${number}?text=${encodedMsg}`);
+        return;
+    }
 
-    console.log(`[Notifications] ALERTE WHATSAPP pour ${number}: ${waLink}`);
+    const message = `*Notification asad.to*\nVisiteur: ${visitorId.substring(0, 8)}\nMessage: ${text}\nLien: https://asad-chat-bot.vercel.app/inbox`;
+    const url = `https://api.callmebot.com/whatsapp.php?phone=${number}&text=${encodeURIComponent(message)}&apikey=${apikey}`;
+
+    const https = require('https');
+    https.get(url, (res) => {
+        let body = '';
+        res.on('data', d => body += d);
+        res.on('end', () => {
+            console.log(`[Notifications] WhatsApp CallMeBot Status: ${res.statusCode}`);
+            if (res.statusCode !== 200) console.error(`[Notifications] WhatsApp Error Body: ${body}`);
+        });
+    }).on('error', (e) => console.error(`[Notifications] WhatsApp Network Error: ${e.message}`));
 }
 
+
 app.get('/', (req, res) => {
-    res.send('asad.to Backend API is running correctly.');
+    res.send('asad.to Backend API is running correctly. Version 1.0.2');
+});
+
+app.get('/api/version', (req, res) => {
+    res.json({ version: '1.0.2', status: 'ready', database: db ? 'connected' : 'disconnected' });
+});
+
+app.get('/api/debug/db-check', async (req, res) => {
+    try {
+        const [tables] = await db.execute('SHOW TABLES');
+        let settingsSchema = null;
+        try {
+            const [schema] = await db.execute('DESCRIBE settings');
+            settingsSchema = schema;
+        } catch (e) {
+            settingsSchema = `Error: ${e.message}`;
+        }
+
+        res.json({
+            status: 'ok',
+            tables: tables.map(t => Object.values(t)[0]),
+            settings_schema: settingsSchema,
+            env: {
+                DB_HOST: process.env.DB_HOST ? 'Configured' : 'Missing',
+                DB_NAME: process.env.DB_NAME
+            }
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message, code: err.code });
+    }
+});
+
+app.get('/api/debug/force-repair-db', async (req, res) => {
+    try {
+        await db.execute(`
+            CREATE TABLE IF NOT EXISTS settings (
+                user_id INT PRIMARY KEY,
+                primary_color VARCHAR(20) DEFAULT '#00b06b',
+                welcome_message TEXT,
+                email_notifications BOOLEAN DEFAULT TRUE,
+                whatsapp_notifications BOOLEAN DEFAULT FALSE,
+                whatsapp_number VARCHAR(100),
+                brevo_api_key VARCHAR(255),
+                callmebot_api_key VARCHAR(255)
+            )
+        `);
+
+        // S'assurer que les colonnes existent si la table existait déjà
+        try {
+            const [columns] = await db.execute('SHOW COLUMNS FROM settings');
+            const columnNames = columns.map(c => c.Field);
+            if (!columnNames.includes('brevo_api_key')) {
+                await db.execute('ALTER TABLE settings ADD COLUMN brevo_api_key VARCHAR(255)');
+            }
+            if (!columnNames.includes('callmebot_api_key')) {
+                await db.execute('ALTER TABLE settings ADD COLUMN callmebot_api_key VARCHAR(255)');
+            }
+        } catch (colErr) {
+            console.error('Erreur forcée colonnes:', colErr.message);
+        }
+
+        res.json({ status: 'ok', message: 'Table settings réparée et mise à jour avec les colonnes API' });
+    } catch (err) {
+        res.status(500).json({ error: err.message, code: err.code });
+    }
 });
 
 const io = new Server(server, {
@@ -142,7 +224,17 @@ async function connectDB() {
         }
 
         db = await mysql.createPool(dbConfig);
-        console.log('Connecté à la base de données MySQL');
+
+        // Test de connexion immédiat
+        try {
+            await db.execute('SELECT 1');
+            console.log('Connecté à la base de données MySQL et vérifié.');
+        } catch (connErr) {
+            console.error('ALERTE: Pool créé mais connexion impossible:', connErr.message);
+            if (connErr.code === 'ENOTFOUND') {
+                console.error('CONSEIL: Le nom d\'hôte (DB_HOST) est introuvable. Vérifiez vos variables d\'environnement Render.');
+            }
+        }
 
         // Robust migration
         try {
@@ -237,7 +329,7 @@ async function connectDB() {
                 console.log(`Utilisateur ${adminEmail} mis à jour en tant qu'administrateur.`);
             }
 
-            // Migration Settings
+            // Migration Settings - Robust version that adds missing columns
             await db.execute(`
                 CREATE TABLE IF NOT EXISTS settings (
                     user_id INT PRIMARY KEY,
@@ -245,20 +337,41 @@ async function connectDB() {
                     welcome_message TEXT,
                     email_notifications BOOLEAN DEFAULT TRUE,
                     whatsapp_notifications BOOLEAN DEFAULT FALSE,
-                    whatsapp_number VARCHAR(20),
-                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                    whatsapp_number VARCHAR(100),
+                    brevo_api_key VARCHAR(255),
+                    callmebot_api_key VARCHAR(255)
                 )
             `);
-            try {
-                const [settingsColumns] = await db.execute('SHOW COLUMNS FROM settings');
-                const settingsColumnNames = settingsColumns.map(c => c.Field);
-                if (!settingsColumnNames.includes('whatsapp_number')) {
-                    await db.execute('ALTER TABLE settings ADD COLUMN whatsapp_number VARCHAR(20)');
-                    console.log('Migration: Colonne whatsapp_number ajoutée à settings');
-                }
-            } catch (setErr) {
-                console.error('Erreur migration settings columns:', setErr.message);
+
+            // Check and add missing columns if table already exists
+            const [settingsColumns] = await db.execute('SHOW COLUMNS FROM settings');
+            const settingsColumnNames = settingsColumns.map(c => c.Field);
+
+            if (!settingsColumnNames.includes('brevo_api_key')) {
+                console.log('[Migration] Ajout de la colonne brevo_api_key');
+                await db.execute('ALTER TABLE settings ADD COLUMN brevo_api_key VARCHAR(255)');
             }
+            if (!settingsColumnNames.includes('callmebot_api_key')) {
+                console.log('[Migration] Ajout de la colonne callmebot_api_key');
+                await db.execute('ALTER TABLE settings ADD COLUMN callmebot_api_key VARCHAR(255)');
+            }
+
+
+            try {
+                const [columns] = await db.execute('SHOW COLUMNS FROM settings');
+                const columnNames = columns.map(c => c.Field);
+                if (!columnNames.includes('brevo_api_key')) {
+                    await db.execute('ALTER TABLE settings ADD COLUMN brevo_api_key VARCHAR(255)');
+                }
+                if (!columnNames.includes('callmebot_api_key')) {
+                    await db.execute('ALTER TABLE settings ADD COLUMN callmebot_api_key VARCHAR(255)');
+                }
+                await db.execute('ALTER TABLE settings MODIFY COLUMN whatsapp_number VARCHAR(100)');
+            } catch (err) {
+                console.log('Migration Settings Note:', err.message);
+            }
+
+            console.log('Table settings vérifiée/créée');
 
             // Migration Stats (Ensure it exists for the summary page)
             await db.execute(`
@@ -270,10 +383,8 @@ async function connectDB() {
                 )
             `);
             console.log('Table stats vérifiée/créée');
-
-            console.log('Table settings vérifiée/créée');
         } catch (migErr) {
-            console.error('Erreur migration:', migErr.message);
+            console.error('CRITICAL Migration Error:', migErr.message);
         }
     } catch (err) {
         console.error('Erreur de connexion MySQL:', err);
@@ -353,7 +464,7 @@ app.get('/api/stats/test-email', async (req, res) => {
         try {
             const https = require('https');
             const data = JSON.stringify({
-                sender: { name: "asad.to Test", email: "test@asad.to" },
+                sender: { name: "asad.to Test", email: testTarget },
                 to: [{ email: testTarget }],
                 subject: "Test Diagnostic Brevo asad.to",
                 htmlContent: `<h2>Succès !</h2><p>L'API Brevo est bien configurée sur votre serveur Render.</p>`
@@ -631,6 +742,11 @@ app.post('/api/users', async (req, res) => {
 
 app.post('/api/login', async (req, res) => {
     const { email, password } = req.body;
+
+    if (!db) {
+        return res.status(503).json({ error: 'La base de données n\'est pas encore connectée. Veuillez réessayer dans quelques instants ou vérifier votre configuration DB_HOST.' });
+    }
+
     try {
         const [users] = await db.execute('SELECT * FROM users WHERE email = ?', [email]);
         if (users.length === 0) return res.status(401).json({ error: 'Identifiants invalides' });
@@ -739,27 +855,76 @@ app.get('/api/public/settings/:siteKey', async (req, res) => {
 });
 
 app.post('/api/settings/:userId', async (req, res) => {
-    const { primary_color, welcome_message, email_notifications, whatsapp_notifications, whatsapp_number } = req.body;
-    const userId = req.params.userId;
+    const { primary_color, welcome_message, email_notifications, whatsapp_notifications, whatsapp_number, brevo_api_key, callmebot_api_key } = req.body;
+    const userId = parseInt(req.params.userId);
     console.log(`[Settings] Save request for user ${userId}:`, req.body);
+
+    if (isNaN(userId)) {
+        return res.status(400).json({ error: 'ID utilisateur invalide' });
+    }
+
     try {
+        console.log(`[SQL] Sauvegarde des paramètres pour UserID: ${userId}`);
         await db.execute(`
-            INSERT INTO settings (user_id, primary_color, welcome_message, email_notifications, whatsapp_notifications, whatsapp_number)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE
-            primary_color = VALUES(primary_color),
-            welcome_message = VALUES(welcome_message),
-            email_notifications = VALUES(email_notifications),
-            whatsapp_notifications = VALUES(whatsapp_notifications),
-            whatsapp_number = VALUES(whatsapp_number)
-        `, [userId, primary_color, welcome_message, email_notifications, whatsapp_notifications, whatsapp_number]);
+                INSERT INTO settings (
+                    user_id, primary_color, welcome_message,
+                    email_notifications, whatsapp_notifications, whatsapp_number,
+                    brevo_api_key, callmebot_api_key
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE
+                    primary_color = VALUES(primary_color),
+                    welcome_message = VALUES(welcome_message),
+                    email_notifications = VALUES(email_notifications),
+                    whatsapp_notifications = VALUES(whatsapp_notifications),
+                    whatsapp_number = VALUES(whatsapp_number),
+                    brevo_api_key = VALUES(brevo_api_key),
+                    callmebot_api_key = VALUES(callmebot_api_key)
+            `, [
+            userId, primary_color, welcome_message,
+            email_notifications ? 1 : 0, whatsapp_notifications ? 1 : 0, whatsapp_number,
+            brevo_api_key || null, callmebot_api_key || null
+        ]);
         res.json({ success: true, message: 'Paramètres enregistrés' });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error(`[Settings] Erreur lors de la sauvegarde pour l'utilisateur ${userId}:`, err.message);
+        res.status(500).json({
+            error: 'Erreur base de données',
+            details: err.message,
+            code: err.code,
+            sql: err.sql // Only for debugging, remove later if needed
+        });
     }
 });
 
 // Conversations Endpoints
+app.post('/api/settings/:userId/test-notifications', async (req, res) => {
+    const { type } = req.body;
+    const userId = parseInt(req.params.userId);
+
+    try {
+        const [rows] = await db.execute('SELECT * FROM settings WHERE user_id = ?', [userId]);
+        const settings = rows[0] || {};
+
+        if (type === 'email') {
+            const [user] = await db.execute('SELECT email FROM users WHERE id = ?', [userId]);
+            const email = user[0]?.email || process.env.NOTIFICATION_EMAIL;
+            await sendNotificationEmail("TEST_SYSTEM", "Ceci est un test de notification par email asad.to", email, settings.brevo_api_key, email);
+            res.json({ success: true, message: `Email de test envoyé à ${email}${settings.brevo_api_key ? ' (via votre clé personnalisée)' : ''}` });
+        } else if (type === 'whatsapp') {
+            const number = settings.whatsapp_number || process.env.WHATSAPP_NUMBER;
+            await sendWhatsAppNotification("TEST_SYSTEM", "Ceci est un test de notification WhatsApp asad.to", number, settings.callmebot_api_key);
+            res.json({ success: true, message: `Séquence WhatsApp lancée pour ${number}${settings.callmebot_api_key ? ' (via votre clé personnalisée)' : ''}. Vérifiez votre téléphone.` });
+
+        } else {
+            res.status(400).json({ error: 'Type de test invalide' });
+        }
+    } catch (err) {
+        console.error('[Settings] Test Error:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.get('/api/conversations', async (req, res) => {
     const { status } = req.query;
     try {
@@ -831,43 +996,49 @@ app.get('/api/conversations/:id/messages', async (req, res) => {
 // Socket logic
 io.on('connection', (socket) => {
     socket.on('register_visitor', async (data) => {
-        onlineVisitors[socket.id] = {
-            ...data,
-            socketId: socket.id,
-            joinedAt: Date.now(),
-            lastMessage: { text: null, sender: null, timestamp: null }
-        };
-        socket.join(data.visitorId);
+        try {
+            onlineVisitors[socket.id] = {
+                ...data,
+                socketId: socket.id,
+                joinedAt: Date.now(),
+                lastMessage: { text: null, sender: null, timestamp: null }
+            };
+            socket.join(data.visitorId);
 
-        // Extract agent_id from siteKey (asad_key_X_live)
-        let agentId = null;
-        if (data.siteKey) {
-            const match = data.siteKey.match(/asad_key_(\d+)_live/);
-            if (match) agentId = parseInt(match[1]);
+            // Extract agent_id from siteKey (asad_key_X_live)
+            let agentId = null;
+            if (data.siteKey) {
+                const match = data.siteKey.match(/asad_key_(\d+)_live/);
+                if (match) agentId = parseInt(match[1]);
+            }
+
+            if (db) {
+                let [convs] = await db.execute("SELECT id FROM conversations WHERE visitor_id = ? AND status = 'open'", [data.visitorId]);
+                let conversationId;
+
+                if (convs.length === 0) {
+                    const [result] = await db.execute(
+                        'INSERT INTO conversations (visitor_id, first_name, last_name, whatsapp, problem, agent_id) VALUES (?, ?, ?, ?, ?, ?)',
+                        [data.visitorId, data.firstName || null, data.lastName || null, data.whatsapp || null, data.problem || null, agentId]
+                    );
+                    conversationId = result.insertId;
+                } else {
+                    conversationId = convs[0].id;
+                    await db.execute(
+                        'UPDATE conversations SET first_name = COALESCE(?, first_name), last_name = COALESCE(?, last_name), whatsapp = COALESCE(?, whatsapp), problem = COALESCE(?, problem), agent_id = COALESCE(agent_id, ?) WHERE id = ?',
+                        [data.firstName || null, data.lastName || null, data.whatsapp || null, data.problem || null, agentId, conversationId]
+                    );
+                }
+
+                socket.conversationId = conversationId;
+                const [history] = await db.execute('SELECT sender_type as sender, content as text, created_at as timestamp FROM messages WHERE conversation_id = ? ORDER BY created_at ASC', [conversationId]);
+                socket.emit('chat_history', history);
+            }
+
+            io.to('agents_room').emit('visitor_list', Object.values(onlineVisitors));
+        } catch (err) {
+            console.error('[Socket] Error in register_visitor:', err.message);
         }
-
-        let [convs] = await db.execute("SELECT id FROM conversations WHERE visitor_id = ? AND status = 'open'", [data.visitorId]);
-        let conversationId;
-
-        if (convs.length === 0) {
-            const [result] = await db.execute(
-                'INSERT INTO conversations (visitor_id, first_name, last_name, whatsapp, problem, agent_id) VALUES (?, ?, ?, ?, ?, ?)',
-                [data.visitorId, data.firstName || null, data.lastName || null, data.whatsapp || null, data.problem || null, agentId]
-            );
-            conversationId = result.insertId;
-        } else {
-            conversationId = convs[0].id;
-            // Update info if they changed, and ensure agent_id is set if it was null
-            await db.execute(
-                'UPDATE conversations SET first_name = COALESCE(?, first_name), last_name = COALESCE(?, last_name), whatsapp = COALESCE(?, whatsapp), problem = COALESCE(?, problem), agent_id = COALESCE(agent_id, ?) WHERE id = ?',
-                [data.firstName || null, data.lastName || null, data.whatsapp || null, data.problem || null, agentId, conversationId]
-            );
-        }
-
-        socket.conversationId = conversationId;
-        const [history] = await db.execute('SELECT sender_type as sender, content as text, created_at as timestamp FROM messages WHERE conversation_id = ? ORDER BY created_at ASC', [conversationId]);
-        socket.emit('chat_history', history);
-        io.to('agents_room').emit('visitor_list', Object.values(onlineVisitors));
     });
 
     socket.on('register_agent', (data) => {
@@ -902,11 +1073,12 @@ io.on('connection', (socket) => {
                             const agentEmail = agentProfile.length > 0 ? agentProfile[0].email : process.env.SMTP_USER;
 
                             if (email_notifications) {
-                                sendNotificationEmail(visitor.visitorId, data.text, agentEmail);
+                                sendNotificationEmail(visitor.visitorId, data.text, agentEmail, agentSettings[0].brevo_api_key, agentEmail);
                             }
                             if (whatsapp_notifications && whatsapp_number) {
-                                sendWhatsAppNotification(visitor.visitorId, data.text, whatsapp_number);
+                                sendWhatsAppNotification(visitor.visitorId, data.text, whatsapp_number, agentSettings[0].callmebot_api_key);
                             }
+
                         }
                     } else if (!isMuted) {
                         // Fallback logic if no agent assigned yet
@@ -923,18 +1095,24 @@ io.on('connection', (socket) => {
     });
 
     socket.on('agent_message', async (data) => {
-        let [convs] = await db.execute("SELECT id FROM conversations WHERE visitor_id = ? AND status = 'open'", [data.visitorId]);
-        if (convs.length > 0) {
-            await db.execute("INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'agent', ?)", [convs[0].id, data.text]);
+        try {
+            if (db) {
+                let [convs] = await db.execute("SELECT id FROM conversations WHERE visitor_id = ? AND status = 'open'", [data.visitorId]);
+                if (convs.length > 0) {
+                    await db.execute("INSERT INTO messages (conversation_id, sender_type, content) VALUES (?, 'agent', ?)", [convs[0].id, data.text]);
 
-            const visitorSocket = Object.keys(onlineVisitors).find(key => onlineVisitors[key].visitorId === data.visitorId);
-            if (visitorSocket) {
-                onlineVisitors[visitorSocket].isBotActive = false;
-                onlineVisitors[visitorSocket].lastMessage = { text: data.text, sender: 'agent', timestamp: Date.now() };
-                io.to('agents_room').emit('visitor_list', Object.values(onlineVisitors));
+                    const visitorSocket = Object.keys(onlineVisitors).find(key => onlineVisitors[key].visitorId === data.visitorId);
+                    if (visitorSocket) {
+                        onlineVisitors[visitorSocket].isBotActive = false;
+                        onlineVisitors[visitorSocket].lastMessage = { text: data.text, sender: 'agent', timestamp: Date.now() };
+                        io.to('agents_room').emit('visitor_list', Object.values(onlineVisitors));
+                    }
+                }
             }
+            io.to(data.visitorId).emit('agent_message', { text: data.text, timestamp: Date.now() });
+        } catch (err) {
+            console.error('[Socket] Error in agent_message:', err.message);
         }
-        io.to(data.visitorId).emit('agent_message', { text: data.text, timestamp: Date.now() });
     });
 
     socket.on('typing', (data) => {
