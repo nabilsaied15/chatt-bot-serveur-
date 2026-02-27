@@ -193,6 +193,22 @@ app.get('/api/debug/force-repair-db', async (req, res) => {
     }
 });
 
+app.get('/api/debug/repair-quick-replies', async (req, res) => {
+    try {
+        await db.execute(`
+            CREATE TABLE IF NOT EXISTS quick_replies (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                shortcut VARCHAR(50) UNIQUE NOT NULL,
+                text TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        res.json({ status: 'ok', message: 'Table quick_replies vérifiée/créée manuellement' });
+    } catch (err) {
+        res.status(500).json({ error: err.message, code: err.code });
+    }
+});
+
 const io = new Server(server, {
     cors: {
         origin: "*",
