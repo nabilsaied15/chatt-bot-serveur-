@@ -953,11 +953,12 @@ app.post('/api/settings/:userId/test-notifications', async (req, res) => {
 });
 
 app.get('/api/conversations', async (req, res) => {
-    const { status } = req.query;
+    const { status, visitorId } = req.query;
     try {
         let query = `
             SELECT c.*, m.content as last_message, m.created_at as last_message_time,
-            (SELECT COUNT(*) FROM messages WHERE conversation_id = c.id AND sender_type = 'visitor' AND is_read = FALSE) as unread_count
+            (SELECT COUNT(*) FROM messages WHERE conversation_id = c.id AND sender_type = 'visitor' AND is_read = FALSE) as unread_count,
+            (SELECT COUNT(*) FROM messages WHERE conversation_id = c.id) as message_count
             FROM conversations c
             LEFT JOIN (
                 SELECT conversation_id, content, created_at
@@ -967,11 +968,22 @@ app.get('/api/conversations', async (req, res) => {
         `;
 
         const params = [];
-        if (status) {
-            query += ' WHERE c.status = ?';
+        let whereClauses = [];
+
+        if (visitorId) {
+            whereClauses.push('c.visitor_id = ?');
+            params.push(visitorId);
+        }
+
+        if (status && status !== 'all') {
+            whereClauses.push('c.status = ?');
             params.push(status);
-        } else {
-            query += " WHERE c.status != 'deleted'";
+        } else if (!visitorId) {
+            whereClauses.push("c.status != 'deleted'");
+        }
+
+        if (whereClauses.length > 0) {
+            query += ' WHERE ' + whereClauses.join(' AND ');
         }
 
         query += ' ORDER BY m.created_at DESC';
@@ -983,14 +995,54 @@ app.get('/api/conversations', async (req, res) => {
     }
 });
 
+app.get('/api/conversations/export/csv', async (req, res) => {
+    try {
+        const [convs] = await db.execute(`
+            SELECT c.id, c.visitor_id, c.first_name, c.last_name, c.status, c.created_at,
+            (SELECT COUNT(*) FROM messages WHERE conversation_id = c.id) as message_count
+            FROM conversations c
+            WHERE c.status != 'deleted'
+            ORDER BY c.created_at DESC
+        `);
+
+        let csv = 'ID;Visitor ID;Name;Status;Date;Messages\n';
+        convs.forEach(c => {
+            const name = `${c.first_name || ''} ${c.last_name || ''}`.trim() || 'N/A';
+            const date = new Date(c.created_at).toLocaleString();
+            csv += `${c.id};"${c.visitor_id}";"${name}";"${c.status}";"${date}";${c.message_count}\n`;
+        });
+
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', 'attachment; filename=archives_conversations.csv');
+        res.send(csv);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.put('/api/conversations/:id/status', async (req, res) => {
     const { status } = req.body;
-    if (!['open', 'closed', 'deleted'].includes(status)) {
+    const validStatuses = ['open', 'resolved', 'pending', 'closed', 'deleted', 'abandoned', 'transferred'];
+    if (!validStatuses.includes(status.toLowerCase())) {
         return res.status(400).json({ error: 'Status invalide' });
     }
     try {
-        await db.execute('UPDATE conversations SET status = ? WHERE id = ?', [status, req.params.id]);
-        res.json({ message: `Status mis à jour vers ${status}` });
+        await db.execute('UPDATE conversations SET status = ? WHERE id = ?', [status.toLowerCase(), req.params.id]);
+        res.json({ message: `Status mis à jour vers ${status}`, status: status.toLowerCase() });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.patch('/api/conversations/:id/status', async (req, res) => {
+    const { status } = req.body;
+    const validStatuses = ['open', 'resolved', 'pending', 'closed', 'deleted', 'abandoned', 'transferred'];
+    if (!validStatuses.includes(status.toLowerCase())) {
+        return res.status(400).json({ error: 'Status invalide' });
+    }
+    try {
+        await db.execute('UPDATE conversations SET status = ? WHERE id = ?', [status.toLowerCase(), req.params.id]);
+        res.json({ message: `Status mis à jour vers ${status}`, status: status.toLowerCase() });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
